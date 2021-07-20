@@ -16,7 +16,7 @@ class Get:
 
     Args:
         token: authentication token. Default = ''
-        store_type: csv, xlsx, postgres, mysql. Default = csv
+        store_type: None, csv, xlsx, postgres, mysql. Default = None
         store_mode: trunc, create. Default = trunc
 
     Other Atributes:
@@ -29,7 +29,7 @@ class Get:
         db_port: database port
     '''
 
-    def __init__(self, token = '', store_type = 'csv', store_mode = 'trunc'):
+    def __init__(self, token = '', store_type = None, store_mode = 'trunc'):
         #API basic call attributes
         self.token = token
         self.header = {'access-token' : token}
@@ -130,6 +130,9 @@ class Get:
                     
                 con.commit()
                 con.close()
+        
+        elif self.store_type is None:
+            return None
             
         else:
             sys.exit('Invalid Option')
@@ -169,7 +172,6 @@ class Get:
             df_temp['observation'] = df_temp['observation'].str.replace(' \n',' ')
             df_temp['answered_by.team.leader_ids'] = [', '.join(map(str, l)) for l in df_temp['answered_by.team.leader_ids']]
             df = pd.concat([df,df_temp],ignore_index=True)
-            df = df_temp
 
         self._store(df, store_name)
             
@@ -209,8 +211,8 @@ class Get:
             result = None
         
         return result
-
-    def get_banco_horas(self, store_name, employee_id, withdraw = ['true', 'false'], return_df = False):
+    #TODO page loop
+    def call_banco_horas(self, store_name, employee_id, withdraw = ['true', 'false'], return_df = False):
         '''
         Function to call the Banco de Horas API and store the return
 
@@ -237,17 +239,24 @@ class Get:
 
             print('--------Loop Employee--------')
             for j in range(len(employee_id)):     
-                print('id = ' + str(employee_id[j]))
-                
-                #set the url and call the API
-                url = url_base + 'page=' + str(page) + '&' + 'per_page=' + str(per_page) + '&' + 'employee_id=' + str(employee_id[j]) + '&' + 'withdraw=' + str(withdraw[i])
-                r = requests.get(url, headers = self.header).json()
+                i = 0
+                meta_count = per_page
 
-                #parse the json and concatenate the dataframes
-                df_temp = pd.json_normalize(r['time_balance_entries'])
-                df = pd.concat([df, df_temp], ignore_index=True)
+                while meta_count >= per_page:
+                    print('--------ID: {} Page {}--------'.format(employee_id[j], page))
+                    #set the url and call the API
+                    url = url_base + 'page=' + str(page + i) + '&' + 'per_page=' + str(per_page) + '&' + 'employee_id=' + str(employee_id[j]) + '&' + 'withdraw=' + str(withdraw[i])
+                    r = requests.get(url, headers = self.header).json()
 
-        self.store(df, store_name)
+                    #parse the json and concatenate the dataframes
+                    df_temp = pd.json_normalize(r['time_balance_entries'])
+                    df = pd.concat([df, df_temp], ignore_index=True)
+
+                    #refresh meta_count with the number of elements returned
+                    meta_count = pd.json_normalize(r['meta'])['count'].iloc[0]
+                    i += 1 #increment the iteration number
+
+        self._store(df, store_name)
         
         if return_df:
             result = df
@@ -256,7 +265,7 @@ class Get:
         
         return result
 
-    def get_centro_custo(self, store_name, return_df = False):
+    def call_centro_custo(self, store_name, return_df = False):
         '''
         Function to call the Centro de Custo API and store the return
 
@@ -278,7 +287,7 @@ class Get:
         df_temp = pd.json_normalize(r['cost_centers'])
         df = df_temp[['id','code','name']]
 
-        self.store(df, store_name)
+        self._store(df, store_name)
         
         if return_df:
             result = df_cc
@@ -286,221 +295,361 @@ class Get:
             result = None
         
         return result
+    
+    def call_cidade(self, store_name, return_df = False):
+        '''
+        Function to call the Cidade API and store the return
 
-#TODO
-    def get_cidade(mode,name, retorno,table_mode):
+        Args:
+            store_name: file or table name to store the dataframe
+            return_df: boolean to set return or not the dataframe from the API. Default False
+            
+        Returns:
+            DataFrame or None
+        '''
     
         print('--------Get Cidades--------')
-        #Cidades
+        #set the url and call the API
         url_base = 'https://api.pontomais.com.br/external_api/v1/cities?attributes=id,name&name=curitiba&sort_direction=asc&count=true&'
         page = 1
         per_page = 100
-        url = url_base + 'page=' + str(page) + '&' + 'per_page=' + str(per_page)
-        #print(url)
+        i = 0
+        meta_count = per_page
+        df = pd.DataFrame()
 
-        r = requests.get(url, headers = parameters.header).json()
+        while meta_count >= per_page:
+            print('--------Page {}--------'.format(page))
+            url = url_base + 'page=' + str(page + i) + '&' + 'per_page=' + str(per_page)
+            r = requests.get(url, headers = self.header).json()
 
-        df_temp = pd.json_normalize(r['cities'])
-        df_ci = df_temp[['id','name','state']]
+            #parse the json
+            df_temp = pd.json_normalize(r['cities'])
+            df_temp = df_temp[['id','name','state']]
+            df = pd.concat([df, df_temp], ignore_index=True)
+            
+            #refresh meta_count with the number of elements returned
+            meta_count = pd.json_normalize(r['meta'])['count'].iloc[0]
+            i += 1 #increment the iteration number
 
-        store(df_ci, name, mode, table_mode)
+
+        self._store(df, store_name)
         
-        if retorno:
-            result = df_ci
+        if return_df:
+            result = df
         else:
             result = None
         
         return result
+    
+    def call_colaboradores(self, store_name, return_df = False):
+        '''
+        Function to call the Colaboradores API and store the return
 
-    def get_colaboradores(mode,name, retorno,table_mode):
+        Args:
+            store_name: file or table name to store the dataframe
+            return_df: boolean to set return or not the dataframe from the API. Default False
+            
+        Returns:
+            DataFrame or None
+        '''
         
         print('--------Get Colaboradores--------')
-        #Colaboradores
+        #set the url and call the API
         url_base = 'https://api.pontomais.com.br/external_api/v1/employees?active=true&attributes=id,first_name,last_name,email,pin,is_clt,cpf,nis,registration_number,time_card_source,has_time_cards,use_qrcode,enable_geolocation,work_hours,cost_center,user,enable_offline_time_cards,login&count=true&sort_direction=asc&sort_property=first_name&'
         page = 1
         per_page = 100
-        url = url_base + 'page=' + str(page) + '&' + 'per_page=' + str(per_page)
-        #print(url)
+        i = 0
+        meta_count = per_page
+        df = pd.DataFrame()
 
-        r = requests.get(url, headers = parameters.header).json()
-        df_temp = pd.json_normalize(r['employees'])
-        df_co = df_temp[['id','first_name','last_name','email','is_clt','user.id','user.active','user.confirmed_at']]
-        df_co = df_co.rename(columns={'user.id': 'user_id','user.active':'active','user.confirmed_at':'confirmed_at'})
-        df_co['full_name'] = df_co['first_name'] + ' ' + df_co['last_name']
+        while meta_count >= per_page:
+            print('--------Page {}--------'.format(page))
+            url = url_base + 'page=' + str(page + i) + '&' + 'per_page=' + str(per_page)
+            r = requests.get(url, headers = self.header).json()
 
-        store(df_co, name, mode, table_mode)
+            #parse the json
+            df_temp = pd.json_normalize(r['employees'])
+            df_temp = df_temp[['id','first_name','last_name','email','is_clt','user.id','user.active','user.confirmed_at']]
+            df.rename(columns={'user.id': 'user_id','user.active':'active','user.confirmed_at':'confirmed_at'}, inplace=True)
+            df_temp['full_name'] = df_temp['first_name'] + ' ' + df_temp['last_name']
+            df = pd.concat([df, df_temp], ignore_index=True)
+
+            #refresh meta_count with the number of elements returned
+            meta_count = pd.json_normalize(r['meta'])['count'].iloc[0]
+            i += 1 #increment the iteration number
+
+        self._store(df, store_name)
         
-        if retorno:
-            result = df_co
+        if return_df:
+            result = df
         else:
             result = None
         
         return result
 
-    def get_departamento(mode,name, retorno,table_mode):
+    def call_departamento(self, store_name, return_df = False):
+        '''
+        Function to call the Departamentos API and store the return
+
+        Args:
+            store_name: file or table name to store the dataframe
+            return_df: boolean to set return or not the dataframe from the API. Default False
+            
+        Returns:
+            DataFrame or None
+        '''
         
         print('--------Get Departamentos--------')
-        #Departamentos
+        #set the url and call the API
         url_base = 'https://api.pontomais.com.br/external_api/v1/departments'
         url = url_base
-        #print(url)
-
-        r = requests.get(url, headers = parameters.header).json()
-        r
-        df_temp = pd.json_normalize(r['departments'])
-        df_dp = df_temp[['id','code','name','employees_count']]
-
-        store(df_dp, name, mode, table_mode)
+        r = requests.get(url, headers = self.header).json()
         
-        if retorno:
-            result = df_dp
+        #parse the json
+        df_temp = pd.json_normalize(r['departments'])
+        df = df_temp[['id','code','name','employees_count']]
+
+        self._store(df, store_name)
+        
+        if return_df:
+            result = df
         else:
             result = None
         
         return result
 
-    def get_excecoes_jornada(mode,name, retorno,table_mode):
+    def call_excecoes_jornada(self, store_name, start_date, end_date, medical_certificate = ['true','false'], return_df = False):
+        '''
+        Function to call the Exceções de Jornada API and store the return
+
+        Args:
+            store_name: file or table name to store the dataframe
+            start_date: 'YYYY-MM-DD' format. Start date passed to the API
+            end_date: 'YYYY-MM-DD' format. End date passed to the API
+            medical_certificate: list containing 'true' and/or 'false'. Default ['true','false']
+            return_df: boolean to set return or not the dataframe from the API. Default False
+            
+        Returns:
+            DataFrame or None
+        '''
         
         print('--------Get Exceções de Jornada--------')
-        #Exceções de Jornada
         url_base = 'https://api.pontomais.com.br/external_api/v1/exemptions?'
-        start_date='2020-01-01'
-        medical_certificate = ['true','false']
-        end_date= today.strftime('%Y-%m-%d')
-        df_ej = pd.DataFrame()
+        df = pd.DataFrame()
 
         for i in range(len(medical_certificate)):
-            print('--------Loop Certificado Médico--------')
-            print('Certificado médico = ' + str(medical_certificate[i]))
+            print('--------Loop Medical Certificate--------')
+            print('Medical certificate = ' + str(medical_certificate[i]))
+            #set the url and call the API
             url = url_base + 'start_date=' + start_date + '&' + 'end_date=' + end_date + '&' + 'medical_certificate=' + str(medical_certificate[i])
+            r = requests.get(url, headers = self.header).json()
 
-            r = requests.get(url, headers = parameters.header).json()
-
+            #parse the json and concatenate the df
             df_temp = pd.json_normalize(r['exemptions'])
             df_temp['observation'] = df_temp['observation'].str.replace(' \n',' ')
             df_temp['answered_by.team.leader_ids'] = [', '.join(map(str, l)) for l in df_temp['answered_by.team.leader_ids']]
-            df_ej = pd.concat([df_ej,df_temp],ignore_index=True)
-            df_ej = df_temp
+            df = pd.concat([df, df_temp], ignore_index=True)
 
-        store(df_ej, name, mode, table_mode)
+        self._store(df, store_name)
         
-        if retorno:
-            result = df_ej
+        if return_df:
+            result = df
         else:
             result = None
         
         return result
+    
+    def call_feriados(self, store_name, return_df = False):
+        '''
+        Function to call the Feriados API and store the return
 
-    def get_feriados(mode,name, retorno,table_mode):
-        
+        Args:
+            store_name: file or table name to store the dataframe
+            return_df: boolean to set return or not the dataframe from the API. Default False
+            
+        Returns:
+            DataFrame or None
+        '''
         print('--------Get Feriados--------')
-        #Feriados
         url_base = 'https://api.pontomais.com.br/external_api/v1/holidays?attributes=id,name,fixed,date,active,team,department,business_unit,cost_center,shift&count=true&'
         page = 1
         per_page = 100
-        url = url_base + 'page=' + str(page) + '&' + 'per_page=' + str(per_page)
-        #print(url)
+        i = 0
+        meta_count = per_page
+        df = pd.DataFrame()
 
-        r = requests.get(url, headers = parameters.header).json()
+        while meta_count >= per_page:
+            print('--------Page {}--------'.format(page))
 
-        df_temp = pd.json_normalize(r['holidays'])
-        df_fe = df_temp[['id','name','date','team','department','business_unit','cost_center']]
+            #set the url and call the API
+            url = url_base + 'page=' + str(page + i) + '&' + 'per_page=' + str(per_page)
+            r = requests.get(url, headers = self.header).json()
 
-        store(df_fe, name, mode, table_mode)
+            #parse the json
+            df_temp = pd.json_normalize(r['holidays'])
+            df_temp = df_temp[['id','name','date','team','department','business_unit','cost_center']]
+            df = pd.concat([df, df_temp], ignore_index=True)
+
+            #refresh meta_count with the number of elements returned
+            meta_count = pd.json_normalize(r['meta'])['count'].iloc[0]
+            i += 1 #increment the iteration number
+
+        self._store(df, store_name)
         
-        if retorno:
-            result = df_fe
+        if return_df:
+            result = df
         else:
             result = None
         
         return result
+    
+    def call_gestores(self, store_name, return_df = False):
+        '''
+        Function to call the Gestores API and store the return
 
-    def get_gestores(mode,name, retorno,table_mode):
-        
+        Args:
+            store_name: file or table name to store the dataframe
+            return_df: boolean to set return or not the dataframe from the API. Default False
+            
+        Returns:
+            DataFrame or None
+        '''
+
         print('--------Get Gestores--------')
-        #Gestores
         url_base = 'https://api.pontomais.com.br/external_api/v1/possible_leaders?count=true&'
         page = 1
         per_page = 100
-        url = url_base + 'page=' + str(page) + '&' + 'per_page=' + str(per_page)
-        #print(url)
+        i = 0
+        meta_count = per_page
+        df = pd.DataFrame()
 
-        r = requests.get(url, headers = parameters.header).json()
+        while meta_count >= per_page:
+            print('--------Page {}--------'.format(page))
+            #set the url and call the API
+            url = url_base + 'page=' + str(page + i) + '&' + 'per_page=' + str(per_page)
+            r = requests.get(url, headers = self.header).json()
 
-        df_temp = pd.json_normalize(r['leaders'])
-        df_ge = df_temp[['id','name']]
+            #parse the json
+            df_temp = pd.json_normalize(r['leaders'])
+            df_temp = df_temp[['id','name']]
+            df = pd.concat([df, df_temp], ignore_index=True)
 
-        store(df_ge, name, mode, table_mode)
+            #refresh meta_count with the number of elements returned
+            meta_count = pd.json_normalize(r['meta'])['count'].iloc[0]
+            i += 1 #increment the iteration number
+
+        self._store(df, store_name)
         
-        if retorno:
-            result = df_ge
+        if return_df:
+            result = df
         else:
             result = None
         
         return result
 
-    def get_grupo_acesso(mode,name, retorno,table_mode):
+    def call_grupo_acesso(self, store_name, return_df = False):
+        '''
+        Function to call the Grupo de Acesso API and store the return
+
+        Args:
+            store_name: file or table name to store the dataframe
+            return_df: boolean to set return or not the dataframe from the API. Default False
+            
+        Returns:
+            DataFrame or None
+        '''
         
         print('--------Get Grupos de Acesso--------')
-        #Grupos de Acesso
+        #set the url and call the API
         url_base = 'https://api.pontomais.com.br/external_api/v1/users/groups?attributes=id,name'
         url = url_base
-        #print(url)
+        r = requests.get(url, headers = self.header).json()
 
-        r = requests.get(url, headers = parameters.header).json()
-        r
+        #parse the json
         df_temp = pd.json_normalize(r['groups'])
-        df_ga = df_temp[['id','name']]
+        df = df_temp[['id','name']]
 
-        store(df_ga, name, mode, table_mode)
+        self._store(df, store_name)
         
-        if retorno:
-            result = df_ga
+        if return_df:
+            result = df
         else:
             result = None
         
         return result
+    
+    def call_unidade_negocio(self, store_name, return_df = False):
+        '''
+        Function to call the Unidade de Negocio API and store the return
 
-
-    def get_unidade_negocio(mode,name, retorno,table_mode):
+        Args:
+            store_name: file or table name to store the dataframe
+            return_df: boolean to set return or not the dataframe from the API. Default False
+            
+        Returns:
+            DataFrame or None
+        '''
 
         print('--------Get Unidade de Negócio--------')
         #Unidade de Negócio
         url_base = 'https://api.pontomais.com.br/external_api/v1/business_units?'
         page = 1
         per_page = 100
-        url = url_base + 'page=' + str(page) + '&' + 'per_page=' + str(per_page)
-        #print(url)
-
-        r = requests.get(url, headers = parameters.header).json()
-        df_temp = pd.json_normalize(r['business_units'])
-        df_un = df_temp[['id','code','name']]
-
-        store(df_un, name, mode, table_mode)
+        i = 0
+        meta_count = per_page
+        df = pd.DataFrame()
         
-        if retorno:
-            result = df_un
+        while meta_count >= per_page:
+            print('--------Page {}--------'.format(page))
+            #set the url and call the API
+            url = url_base + 'page=' + str(page + i) + '&' + 'per_page=' + str(per_page)
+            r = requests.get(url, headers = self.header).json()
+
+            #parse the json
+            df_temp = pd.json_normalize(r['business_units'])
+            df_temp = df_temp[['id','code','name']]
+            df = pd.concat([df, df_temp], ignore_index=True)
+
+            #refresh meta_count with the number of elements returned
+            #this response doesn't return the quantity of elements
+            meta_count = df_temp.shape[0]
+            i += 1 #increment the iteration number
+
+        self._store(df, store_name)
+        
+        if return_df:
+            result = df
         else:
             result = None
         
         return result
 
-    def get_usuarios(mode,name, retorno,table_mode):
+    def call_usuarios(self, store_name, return_df = False):
+        '''
+        Function to call the Unidade de Negocio API and store the return
+
+        Args:
+            store_name: file or table name to store the dataframe
+            return_df: boolean to set return or not the dataframe from the API. Default False
+            
+        Returns:
+            DataFrame or None
+        '''
         
         print('--------Get Usuários--------')
-        #Usuários
+        #set the url and call the API
         url_base = 'https://api.pontomais.com.br/external_api/v1/users?attributes=id,group,employee,sign_in_count,last_sign_in_at,last_sign_in_ip,confirmed_at,active,admin'
         url = url_base
+        r = requests.get(url, headers = self.header).json()
 
-        r = requests.get(url, headers = parameters.header).json()
-
+        #parse the json
         df_temp = pd.json_normalize(r['users'])
-        df_us = df_temp
+        df = df_temp
 
-        store(df_us, name, mode, table_mode)
+        self._store(df, store_name)
         
-        if retorno:
-            result = df_us
+        if return_df:
+            result = df
         else:
             result = None
         
